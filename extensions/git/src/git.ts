@@ -77,6 +77,10 @@ function parseVersion(raw: string): string {
 	return raw.replace(/^git version /, '');
 }
 
+export function toGitPath(relativePath: string): string {
+	return relativePath.replace(/\\/g, '/');
+}
+
 function findSpecificGit(path: string, onValidate: (path: string) => boolean): Promise<IGit> {
 	return new Promise<IGit>((c, e) => {
 		if (!onValidate(path)) {
@@ -1570,7 +1574,7 @@ export class Repository {
 
 	async buffer(ref: string, filePath: string): Promise<Buffer> {
 		const relativePath = this.sanitizeRelativePath(filePath);
-		const child = this.stream(['show', '--textconv', `${ref}:${relativePath}`]);
+		const child = this.stream(['show', '--textconv', `${ref}:${toGitPath(relativePath)}`]);
 
 		if (!child.stdout) {
 			return Promise.reject<Buffer>('Can\'t open file from git');

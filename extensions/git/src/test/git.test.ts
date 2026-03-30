@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import 'mocha';
-import { GitStatusParser, parseGitCommits, parseGitmodules, parseLsTree, parseLsFiles, parseGitRemotes, parseCoAuthors } from '../git';
+import { GitStatusParser, parseGitCommits, parseGitmodules, parseLsTree, parseLsFiles, parseGitRemotes, parseCoAuthors, toGitPath } from '../git';
 import * as assert from 'assert';
 import { splitInChunks } from '../util';
 
@@ -641,6 +641,16 @@ suite('git', () => {
 				parseCoAuthors('Fix bug\n\nSigned-off-by: Admin <admin@corp.com>\nCo-authored-by: Jane Doe <jane@example.com>'),
 				[{ name: 'Jane Doe', email: 'jane@example.com' }]
 			);
+		});
+	});
+
+	suite('toGitPath', () => {
+		test('preserves posix separators', () => {
+			assert.strictEqual(toGitPath('src/nested/file.txt'), 'src/nested/file.txt');
+		});
+
+		test('normalizes windows separators for git object expressions', () => {
+			assert.strictEqual(toGitPath('src\\nested\\file.txt'), 'src/nested/file.txt');
 		});
 	});
 

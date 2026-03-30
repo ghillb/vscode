@@ -8,6 +8,7 @@ import assert from 'assert';
 import { workspace, commands, window, Uri, WorkspaceEdit, Range, TextDocument, extensions, TabInputTextDiff } from 'vscode';
 import * as cp from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import type { GitExtension, API, Repository } from '../api/git';
 import { Status } from '../api/git.constants';
@@ -35,6 +36,27 @@ suite('git smoke test', function () {
 		const end = doc.lineAt(doc.lineCount - 1).range.end;
 		edit.replace(doc.uri, new Range(end, end), text);
 		await workspace.applyEdit(edit);
+	}
+
+	async function waitForRepository(rootPath: string): Promise<Repository> {
+		while (true) {
+			const repository = git.repositories.find(repository => repository.rootUri.fsPath === rootPath);
+			if (repository) {
+				return repository;
+			}
+
+			const onDidOpenRepository = eventToPromise(git.onDidOpenRepository);
+			await commands.executeCommand('git.openRepository', rootPath);
+
+			const openedRepository = git.repositories.find(repository => repository.rootUri.fsPath === rootPath);
+			if (openedRepository) {
+				return openedRepository;
+			}
+
+			if ((await onDidOpenRepository).rootUri.fsPath === rootPath) {
+				return git.repositories.find(repository => repository.rootUri.fsPath === rootPath)!;
+			}
+		}
 	}
 
 	let git: API;
@@ -174,5 +196,48 @@ suite('git smoke test', function () {
 
 		assert.strictEqual(repository.state.workingTreeChanges.length, 0);
 		assert.strictEqual(repository.state.indexChanges.length, 0);
+	});
+
+	test('opens staged diff editor for files inside submodules', async function () {
+		const submoduleSourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vscode-git-submodule-'));
+		const submoduleSourceRelativePath = path.join('src', 'nested.txt');
+		const submoduleSourceFilePath = path.join(submoduleSourceRoot, submoduleSourceRelativePath);
+
+		fs.mkdirSync(path.dirname(submoduleSourceFilePath), { recursive: true });
+		fs.writeFileSync(submoduleSourceFilePath, 'nested', 'utf8');
+		cp.execSync('git init -b main', { cwd: submoduleSourceRoot });
+		cp.execSync('git config user.name testuser', { cwd: submoduleSourceRoot });
+		cp.execSync('git config user.email monacotools@example.com', { cwd: submoduleSourceRoot });
+		cp.execSync('git config commit.gpgsign false', { cwd: submoduleSourceRoot });
+		cp.execSync('git add .', { cwd: submoduleSourceRoot });
+		cp.execSync('git commit -m "initial commit"', { cwd: submoduleSourceRoot });
+
+		cp.execSync(`git -c protocol.file.allow=always submodule add "${submoduleSourceRoot}" deps/submodule`, { cwd });
+		cp.execSync('git commit -am "add submodule"', { cwd });
+
+		await repository.status();
+
+		const submoduleRoot = file('deps/submodule');
+		const submoduleRepository = await waitForRepository(submoduleRoot);
+		const submoduleRelativePath = path.join('deps', 'submodule', submoduleSourceRelativePath);
+		const submoduleUri = uri(submoduleRelativePath);
+
+		const submoduleDocument = await open(submoduleRelativePath);
+		await type(submoduleDocument, '\nchange');
+		await submoduleDocument.save();
+		await submoduleRepository.status();
+
+		await submoduleRepository.add([submoduleUri.fsPath]);
+		await submoduleRepository.status();
+
+		assert.ok(submoduleRepository.state.indexChanges.some(change => change.uri.fsPath === submoduleUri.fsPath));
+
+		await commands.executeCommand('git.openChange', submoduleUri);
+
+		assert(window.activeTextEditor);
+		assert.strictEqual(window.activeTextEditor!.document.uri.path, submoduleUri.path);
+
+		assert(window.tabGroups.activeTabGroup.activeTab);
+		assert(window.tabGroups.activeTabGroup.activeTab!.input instanceof TabInputTextDiff);
 	});
 });
